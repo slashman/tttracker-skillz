@@ -396,7 +396,37 @@ function emitFailure(command, err, useJson) {
   process.exitCode = 1
 }
 
-function main(argv) {
+/**
+ * Options whose value is a time spec, and so may legitimately begin with '-'.
+ * Mirrors the relative form accepted by parseAt in src/time.mjs.
+ */
+const TIME_OPTIONS = new Set(['--at', '--start', '--end'])
+const RELATIVE_TIME = /^([+-])\s*(\d+(?:\.\d+)?)\s*([mh])$/i
+
+/**
+ * parseArgs refuses a value that starts with '-' ("argument is ambiguous"), which
+ * breaks the documented `--at -20m` form while `--at=-20m` works. Joining the pair
+ * into the '=' form before parsing keeps both spellings working. Deliberately
+ * narrow: only for time-valued options, and only when the next token really is a
+ * relative time, so a genuine following flag is never swallowed.
+ */
+function joinNegativeTimeValues(argv) {
+  const out = []
+  for (let i = 0; i < argv.length; i++) {
+    const tok = argv[i]
+    const next = argv[i + 1]
+    if (TIME_OPTIONS.has(tok) && next !== undefined && RELATIVE_TIME.test(next)) {
+      out.push(`${tok}=${next}`)
+      i++
+    } else {
+      out.push(tok)
+    }
+  }
+  return out
+}
+
+function main(rawArgv) {
+  const argv = joinNegativeTimeValues(rawArgv)
   // --json may appear anywhere, including after a flag that failed to parse, so it
   // is sniffed before parseArgs runs. Otherwise a bad flag would print prose to a
   // caller that asked for JSON.

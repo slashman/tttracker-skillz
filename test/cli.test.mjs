@@ -51,6 +51,33 @@ describe('start / status / stop', () => {
     )
   })
 
+  test('a negative relative --at works in both spellings', (t) => {
+    // Regression: parseArgs rejects a value beginning with '-' as ambiguous, so the
+    // documented `--at -20m` form failed while `--at=-20m` worked. Unit tests of
+    // parseAt could not catch it — the argument never reached the parser.
+    const dir = tempDataDir(t)
+    const spaced = run(dir, ['start', 'Spaced', '--project', 'A', '--at', '-20m'])
+    assert.equal(spaced.data.entry.start, '2026-07-27T16:40:00-05:00')
+
+    const equals = run(dir, ['start', 'Equals', '--project', 'A', '--at=-2h'])
+    assert.equal(equals.data.entry.start, '2026-07-27T15:00:00-05:00')
+  })
+
+  test('edit accepts negative relative --start and --end', (t) => {
+    const dir = tempDataDir(t)
+    const id = run(dir, ['start', 'X', '--project', 'A', '--at', '10:00']).data.entry.id
+    run(dir, ['stop', '--at', '11:00'])
+    const edited = run(dir, ['edit', id, '--end', '-30m'])
+    assert.equal(edited.data.entry.end, '2026-07-27T16:30:00-05:00')
+  })
+
+  test('a flag following a time option is not swallowed as its value', (t) => {
+    // The '=' joining must be narrow enough that `--at --json` still errors rather
+    // than silently consuming the next flag as a time.
+    const dir = tempDataDir(t)
+    assert.match(run(dir, ['start', 'X', '--project', 'A', '--at'], { expectFail: true }).error, /ambiguous|argument/)
+  })
+
   test('stopping before the start is refused', (t) => {
     const dir = tempDataDir(t)
     run(dir, ['start', 'X', '--project', 'A', '--at', '10:00'])

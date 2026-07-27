@@ -124,12 +124,26 @@ Entries carry arbitrary `links`, so the CLI stays service-agnostic. For a Linear
 the title first, then start the entry with a link:
 
 ```
-mcp__linear-server__get_issue        # server is named linear-server; one-time /mcp OAuth, no separate auth call
+mcp__claude_ai_Linear__*             # issue-reading tools; see the auth note below
 node ./bin/tracker.mjs start "Fix checkout webhook retry" --project client-co --link linear=ENG-412 --json
 ```
 
-If that MCP server isn't available, **degrade rather than fail**: record
-`--link linear=ENG-412` with the key alone and say the title couldn't be resolved.
+**Don't assume a server name — look at the tools actually available.** Linear MCP servers are
+installed per machine and namespaced differently depending on how they were added
+(`mcp__claude_ai_Linear__*` and `mcp__linear-server__*` are both real in the wild). Search for
+the Linear tools rather than calling a hardcoded name.
+
+**Auth may be a prerequisite.** If the only Linear tools present are `authenticate` and
+`complete_authentication`, the server is installed but unauthorized: the real issue-reading
+tools do not exist yet and appear only after OAuth. Call `authenticate`, give the user the
+authorization URL, then pass the callback URL from their browser to
+`complete_authentication`. Some setups instead use a one-time `/mcp` OAuth with no auth tool at
+all — again, go by which tools are present.
+
+If no Linear server is available, or the user would rather not authorize right now, **degrade
+rather than fail**: record `--link linear=ENG-412` with the key alone and say the title couldn't
+be resolved. Never block starting an entry on an integration — the clock matters more than the
+title.
 
 Reports go the other way: `report --week --attribute --round 15 --format json` is the
 documented contract for anything downstream, including timesheet generation. See
