@@ -1,0 +1,10 @@
+# Local machine config: holds this developer's dataDir path.
+# The example file is committed; this one never is.
+tracker.config.json
+
+node_modules/
+*.log
+.DS_Store
+
+# Atomic-write temp files, should never survive a successful run.
+*.tmp-*

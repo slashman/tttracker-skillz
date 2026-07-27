@@ -1,0 +1,141 @@
+---
+name: time-tracking
+description: >
+  Live time tracking for working several projects in parallel, backed by this repo's tracker CLI. Use this skill when the
+  user says they started or stopped working on something, wants to clock in or clock out, asks what they are working on
+  right now, asks to log time or track time against a project, asks how long they spent on a task, or wants today's or
+  this week's hours. Also use it for the analysis side: how much did today actually cost per task, what would today look
+  like if the work had been done sequentially, how parallel was my week, how much of my time was overlap, where did my
+  time really go, how many times did I switch context. Handles concurrent overlapping entries as the normal case.
+---
+
+# Time tracking
+
+A live clock for parallel work. Every operation goes through the repo's CLI, which owns the
+files and the arithmetic:
+
+```
+node ./bin/tracker.mjs <command> --json
+```
+
+**Never read or write files under the data directory directly.** Duration maths, overlap
+attribution, rounding and the day-file format are the CLI's job. Hand-editing JSON is how
+totals go quietly wrong.
+
+## Scope
+
+This skill drives a **live clock**: it starts and stops entries as work happens, and reports
+on entries that have already been tracked. It does not reconstruct a past week from calendars,
+chat history or meeting notes — it only knows what was tracked here.
+
+## Phrase → command
+
+| The user says | Run |
+| :-- | :-- |
+| "I started working on X" / "clock me in on X" | `start <task words> --project <P>` |
+| "I started X at 9" / "…20 minutes ago" | `start … --at 9:00` / `--at -20m` |
+| "also starting Y" / "I'm working on Y too" | `start` again — do **not** stop anything |
+| "I stopped working on X" / "clock out of X" | `stop <query>` |
+| "I'm done for now" (one thing running) | `stop` |
+| "I'm now working on Y instead" | `switch <task words> --project <P>` |
+| "what am I working on" / "what's running" | `status` |
+| "today's hours" / "today's work sheet" | `today` |
+| "this week's hours" | `report --week` |
+| "how long did I spend on X" | `report --week --project <P>` |
+| "how much did today actually cost per task" | `today --attribute` |
+| "what would today look like sequentially" | `today --attribute` |
+| "how parallel was today" / "how much was overlap" | `analyze` |
+| "give me the data" / "export it" | `export --from D --to D --format csv` |
+| "note that …" | `note --last <text>` |
+| "that's ticket ENG-412" | `link <query> linear=ENG-412` |
+| "actually that started at 8" | `edit <id> --start 8:00` |
+| "delete that entry" | `rm <id>` |
+| "back on what I was doing before" | `resume [query]` |
+
+Parse the `--json` envelope, not the prose:
+
+```
+success → exit 0, {"ok": true,  "schemaVersion": 1, "command": …, "data": {…}, "message": …, "warnings": […]}
+failure → exit 1, {"ok": false, "schemaVersion": 1, "command": …, "error": …, "hint": …}
+```
+
+On `ok: false`, tell the user the `error` and act on the `hint` — don't retry blindly.
+
+## Rules that matter
+
+**Concurrency is normal.** Several entries open at once is the expected state, not a mistake.
+`start` never stops anything. When `start` reports `data.alsoOpen`, mention what else is
+running as information — it is not a warning.
+
+**Never guess which entry to stop.** If "I stopped" arrives with more than one entry open, the
+CLI returns an error listing the candidates. Run `status`, show them, and **ask which one**.
+Do not pick the oldest, the newest, or the one that seems most likely.
+
+**`switch` is destructive.** It closes *everything* currently open before starting the new
+entry. Report every entry it closed, with durations, from `data.closed`.
+
+**A project is required.** If the user didn't name one, check `status` and `today` for context
+and the config's `defaultProject`. Ask only when it is genuinely unclear.
+
+**Relay warnings verbatim.** In particular:
+- `matched project "…" by similarity` — a fuzzy project match that may have merged two real
+  projects. The user needs to see this to catch it.
+- `… rounded away to zero at 15m granularity` — a short task vanished from a rounded report.
+  Never suppress this; it is exactly how a timesheet ends up wrong.
+
+## Explaining attribution
+
+On a parallel day the raw durations add up to more hours than the day contains. Attribution
+splits each *moment* among the tasks running at that moment, so per-task totals add up to the
+wall clock the work actually occupied.
+
+When you show attributed numbers, **always show raw beside attributed and say which strategy
+was used in plain language** — the `data.attribution.explanation` field carries the wording. A
+single unexplained number that disagrees with the user's own sense of their day reads as a bug.
+
+Strategies (`--strategy`):
+- `equal` (default) — time split evenly among tasks running at the same moment
+- `weighted` — split in proportion to per-entry `--weight`, for one foreground task among
+  background ones
+- `exclusive` — each moment goes entirely to the most recently started open task, modelling
+  "only one thing really had my attention"
+
+Be careful about what this claims. It apportions elapsed time, which is arithmetic. It does
+**not** say how long a task would have taken without multitasking overhead — timestamps cannot
+answer that. If the user asks the counterfactual, say so, and offer `analyze`: the gap between
+raw and attributed (`overlapMinutes`) is how much apparent effort was overlap.
+
+## Rendering
+
+`today --json` / `report --json` → a markdown table grouped project → task, with per-project
+subtotals and a day total. Flag still-running entries and show their elapsed time. When
+`--attribute` is on, show Raw and Attributed columns side by side. The CLI's own `message`
+field already contains a rendered markdown table you can use directly.
+
+`analyze --json` → a compact summary: overlap factor, minutes at each concurrency level from
+`concurrencyHistogram`, and `contextSwitches`.
+
+For rounded reports (`--round 15`), note the `rounding.residual` if it is non-zero: putting a
+day on a coarse grid changes the total, and that is worth one sentence rather than silence.
+
+## Linking to trackers
+
+Entries carry arbitrary `links`, so the CLI stays service-agnostic. For a Linear issue, resolve
+the title first, then start the entry with a link:
+
+```
+mcp__linear-server__get_issue        # server is named linear-server; one-time /mcp OAuth, no separate auth call
+node ./bin/tracker.mjs start "Fix checkout webhook retry" --project client-co --link linear=ENG-412 --json
+```
+
+If that MCP server isn't available, **degrade rather than fail**: record
+`--link linear=ENG-412` with the key alone and say the title couldn't be resolved.
+
+Reports go the other way: `report --week --attribute --round 15 --format json` is the
+documented contract for anything downstream, including timesheet generation. See
+`docs/SCHEMA.md`.
+
+## Setup problems
+
+If the CLI fails with a config or data-directory error, that's the `install-skill` skill's job —
+hand off to it rather than guessing at paths.

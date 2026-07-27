@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node ./bin/tracker.mjs:*)",
+      "Bash(node bin/tracker.mjs:*)",
+      "Bash(node ./bin/install-check.mjs:*)",
+      "Bash(node bin/install-check.mjs:*)",
+      "Bash(node --test:*)"
+    ]
+  }
+}

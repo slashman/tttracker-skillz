@@ -1,0 +1,27 @@
+{
+  "_comment": "Copy to tracker.config.json (gitignored) and edit. Every key is optional; the values below are the defaults. TRACKER_DATA_DIR and TRACKER_TZ override this file.",
+
+  "dataDir": "~/.tracker/data",
+
+  "tz": null,
+
+  "autoCommit": false,
+
+  "defaultProject": null,
+
+  "roundStep": null,
+
+  "attributionStrategy": "equal",
+
+  "lookbackDays": 3,
+
+  "_docs": {
+    "dataDir": "Where day files and projects.json live. Kept outside the repo so tracked time is not committed to the tool's own history. '~' is expanded.",
+    "tz": "IANA timezone for local-day boundaries and --at parsing. null means use the system timezone.",
+    "autoCommit": "If true and dataDir is a git repo, commit after every mutation. Failures are non-fatal warnings.",
+    "defaultProject": "Project id used when a task is started without one and nothing else is open.",
+    "roundStep": "Default minute granularity for reports (e.g. 15). null means no rounding.",
+    "attributionStrategy": "How overlapping time is split: 'equal', 'weighted', or 'exclusive'. See docs/SCHEMA.md.",
+    "lookbackDays": "How many days back to search for still-open entries."
+  }
+}
