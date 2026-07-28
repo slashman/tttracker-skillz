@@ -326,7 +326,7 @@ export function reportToMarkdown(report) {
     if (step) row.push(`**${humanMinutes(p.roundedMinutes)}**`)
     lines.push(`| ${row.join(' | ')} |`)
     for (const t of p.tasks) {
-      const label = `&nbsp;&nbsp;${t.task}${t.open ? ' ⏱' : ''}`
+      const label = `  ${t.task}${t.open ? ' ⏱' : ''}`
       const trow = attributed
         ? [label, humanMinutes(t.rawMinutes), humanMinutes(t.attributedMinutes)]
         : [label, humanMinutes(t.windowMinutes)]
