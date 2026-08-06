@@ -8,7 +8,8 @@ findings, `AJ`–`AK`. Item **E**, open since day one, was fixed and committed i
 The day so far: 7 entries, 1 project, raw **3h01m** over **2h23m** of union wall clock — overlap
 factor **1.262**, peak concurrency **2**, 38m of overlap, 8 context switches. Data in
 `~/.tracker/data/days/2026/08/2026-08-06.json`. The day is still in progress; these numbers are a
-snapshot taken mid-afternoon, not a close-out.
+snapshot taken mid-afternoon, not a close-out. Two more entries followed (a 30m tracker-work block
+and a resumed ACME-162 clock), so the day stands at 9 entries and 2 projects as **AK′** is written.
 
 **2026-08-05 has 8 entries (3h48m) and no discovery doc.** The tracking record is now ahead of the
 observation record — worth knowing when reading this series as a history.
@@ -90,8 +91,7 @@ Sketch, unbuilt, deliberately modest:
 - **A live day timeline.** Concurrent entries as parallel lanes on one time axis, open clocks marked
   and ticking. This is the view that makes overlap legible, and overlap is the thing this tracker
   exists to represent.
-- **Read-only. Chat stays the only write path.** The conversational skill is the product; a view
-  that grows buttons becomes a second, competing interface with its own edge cases.
+- ~~**Read-only. Chat stays the only write path.**~~ **Revised the same day — see below.**
 - **Derived entirely from `--json`.** `today --attribute` and `analyze` already carry everything a
   timeline needs — lanes, overlap minutes, concurrency histogram, per-ticket rows. No new storage,
   no new arithmetic, no second source of truth for durations.
@@ -101,6 +101,37 @@ Sketch, unbuilt, deliberately modest:
 Open question, worth deciding before building: whether this is a rendered artifact per request, a
 local page the CLI serves, or a terminal drawing. The first is cheapest and fits how the tool is
 used today; the third keeps everything in one window.
+
+### AK′. Revised hours later the same day: the UI is editable, and the two halves specialise
+
+**Direction, 2026-08-06, superseding the read-only bullet above:** *"we do need a visual UI after
+all where the user can manually slot his time entries and change them as needed; this will work
+alongside the interactive chat for inference and connection with other services."*
+
+So not a dashboard bolted onto a chat tool. Two interfaces, each doing what it is actually good at:
+
+| | The UI | The chat |
+| :-- | :-- | :-- |
+| Best at | direct manipulation of things that already exist — drag a boundary, slot a forgotten block, retype a task name, see the day's shape | **inference** (turning *"stopped at 2:00PM for the sync, which just finished"* into two commands with the right boundaries) and **connections** (Linear titles, tickets, whatever comes next) |
+| Interaction | pointing at time | describing work in a sentence |
+| Failure it fixes | the wrong pick that no prose could show | the entry never created because opening an app was too much friction |
+
+The read-only rule written this morning was the wrong instinct, and today's own data is the
+argument against it. Three of the day's nine entries were placed or repaired after the fact —
+`qht4e4` reconstructed from a spoken time range, `jt77ac`'s task and ticket rewritten after the bad
+resume, `rivl9s` logged as a flat 30m the user chose rather than a measured stretch. Every one of
+those is *slotting*: putting a known block of work into a known place on the day. Doing that through
+sentences is possible — all three were done that way — but it is the interaction pointing was
+invented for, and the transcript above is the evidence of how many turns it costs.
+
+What does **not** change: the CLI still owns every timestamp and every duration. The UI issues the
+same commands the chat does and re-reads the same `--json`. The moment a view edits day files
+directly there are two implementations of overlap arithmetic, and the day the two disagree is the
+day the tool stops being trustworthy.
+
+Consequence for **AJ**: an editable timeline would have made the bad `resume` a two-second drag to
+fix rather than an hour of it being wrong. It would not have *prevented* it — the tool still has to
+pick the right entry when the user speaks, which is why the fix in `dbe8794` matters either way.
 
 ---
 
