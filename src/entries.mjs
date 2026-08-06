@@ -12,6 +12,10 @@ import {
 import { resolveProject } from './projects.mjs'
 import { assertNotFuture, localDateKey, minutesBetween, parseAt, toLocalISO } from './time.mjs'
 
+// How close to the resume instant an entry's end has to be to read as "I just stopped that",
+// generous enough to cover a stop and a resume typed as two commands in the same breath.
+const JUST_STOPPED_MS = 2 * 60 * 1000
+
 function parseTags(spec) {
   if (!spec) return []
   return String(spec)
@@ -489,10 +493,44 @@ export function resumeEntry(cfg, opts) {
     for (const entry of readDay(cfg, key).entries) candidates.push({ entry, dateKey: key })
   }
   if (candidates.length === 0) throw new TrackerError('no previous entries to resume')
+  // "what I was doing before" is the work that stopped most recently, which is not the same as
+  // the entry that started most recently: a long task started first can outlast a short one.
   candidates.sort((a, b) => entryStartMs(b.entry) - entryStartMs(a.entry))
+  const finished = candidates
+    .filter((c) => c.entry.end != null)
+    .sort((a, b) => entryEndMs(b.entry) - entryEndMs(a.entry))
 
-  const source = opts.query ? matchOne(candidates, opts.query, { what: 'entry' }) : candidates[0]
-  return startEntry(cfg, {
+  if (!opts.query && finished.length === 0) {
+    throw new TrackerError('no finished entries to resume', {
+      hint: 'everything tracked is still running — stop one first, or name the task to resume',
+    })
+  }
+
+  // "the meeting is done, back to work" arrives as stop-then-resume in one breath, so the
+  // entry that ended a moment ago is the thing being left, never the thing being returned to.
+  // Skip those and take the next most recently finished; if there is nothing else, that entry
+  // really is the only work to go back to, and resuming it gets said out loud.
+  const resumeMs = resolveAt(cfg, opts.at, nowDate)
+  const justStopped = finished.filter(({ entry }) => Math.abs(resumeMs - entryEndMs(entry)) <= JUST_STOPPED_MS)
+  const earlier = finished.filter((c) => !justStopped.includes(c))
+
+  const guardWarnings = []
+  let source
+  if (opts.query) {
+    source = matchOne(candidates, opts.query, { what: 'entry' })
+  } else if (earlier.length > 0) {
+    source = earlier[0]
+    if (justStopped.length > 0) {
+      guardWarnings.push(
+        `skipped ${justStopped.map(({ entry }) => describe(entry)).join(', ')} — stopped just now, not resumed`,
+      )
+    }
+  } else {
+    source = finished[0]
+    guardWarnings.push(`${describe(source.entry)} was stopped just now and is the only finished entry — resumed it`)
+  }
+
+  const started = startEntry(cfg, {
     nowDate,
     task: source.entry.task,
     project: source.entry.project,
@@ -501,6 +539,7 @@ export function resumeEntry(cfg, opts) {
     weight: source.entry.weight,
     link: Object.entries(source.entry.links).map(([k, v]) => `${k}=${v}`),
   })
+  return { ...started, resumedFrom: source.entry.id, warnings: [...guardWarnings, ...started.warnings] }
 }
 
 function round2(n) {

@@ -4,8 +4,8 @@ Findings from **2026-07-28**, the first day the tracker was used for real work t
 conversational skill rather than by hand. Each entry: what happened, the repro, the file to change.
 Doubles as the acceptance pass for `nextSteps.md` steps 7–10.
 
-Fifteen findings, `A`–`O`. Only **J** is fixed; the rest are open. Severity is called out inline
-where it matters — **E** and **A** have the strongest evidence behind them.
+Fifteen findings, `A`–`O`. **J** and **E** are fixed; the rest are open. Severity is called out
+inline where it matters — **E** and **A** have the strongest evidence behind them.
 
 The day itself: 16 entries, 5 projects, 07:20–17:37, raw 11h21m over 8h52m of wall clock (overlap
 factor 1.28, peak concurrency 3). That data is in `~/.tracker/data/days/2026/07/2026-07-28.json`
@@ -70,6 +70,18 @@ explicit query was needed. The skill's phrase table maps "back on what I was doi
 
 Fix: exclude the most-recently-ended entry (or any ending within a few seconds) from bare
 `resume`; and until then, the skill should mandate a query.
+
+**STATUS: FIXED 2026-08-06** — `resumeEntry` in `src/entries.mjs` now does two things. It ranks
+candidates by **end** time rather than start, because "what I was doing before" is the work that
+stopped most recently, and a long task started first can outlast a short one started later
+(reported 2026-08-06: after stopping a review at 12:15 and a longer feedback task at 12:27, bare
+`resume` picked the review). Then the guard this finding asked for: any entry ending within
+`JUST_STOPPED_MS` (2 minutes) of the resume instant is skipped as the thing being left rather than
+returned to, with a warning naming what was skipped. The window is measured against the resume
+instant, not wall-clock now, so `stop --at 14:00` followed by `resume --at 14:00` is caught too.
+When the just-stopped entry is the only finished one it is still resumed — there is nothing earlier
+to return to — but the warning says so out loud. The result carries `resumedFrom` so the pick is
+auditable. Four tests added; 166 pass. The skill does **not** need to mandate a query.
 
 ## F. No first-class way to log an already-finished activity
 "just finished the Orion sync, it went from 8 to 8:40" — never clocked in. Recording it took

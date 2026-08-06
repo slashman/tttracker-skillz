@@ -660,6 +660,37 @@ describe('notes, links, edit, rm, resume', () => {
     assert.equal(resumed.data.entry.links.linear, 'ENG-412')
     assert.equal(resumed.data.entry.end, null)
   })
+
+  test('resume with no query picks the most recently finished entry, not the last started', (t) => {
+    const dir = tempDataDir(t)
+    run(dir, ['log', 'Long task', '--project', 'A', '--from', '09:00', '--to', '11:00'])
+    run(dir, ['log', 'Short task', '--project', 'A', '--from', '09:30', '--to', '10:00'])
+    const resumed = run(dir, ['resume', '--at', '11:30'])
+    assert.equal(resumed.data.entry.task, 'Long task')
+  })
+
+  test('resume skips the entry stopped in the same breath and warns about it', (t) => {
+    const dir = tempDataDir(t)
+    run(dir, ['log', 'Deep work', '--project', 'A', '--from', '09:00', '--to', '10:00'])
+    run(dir, ['log', 'Standup', '--project', 'A', '--from', '10:30', '--to', '11:00'])
+    const resumed = run(dir, ['resume', '--at', '11:00'])
+    assert.equal(resumed.data.entry.task, 'Deep work')
+    assert.match(resumed.warnings.join(' '), /Standup.*stopped just now/)
+  })
+
+  test('resume falls back to the just-stopped entry when it is the only one, and says so', (t) => {
+    const dir = tempDataDir(t)
+    run(dir, ['log', 'Standup', '--project', 'A', '--from', '10:30', '--to', '11:00'])
+    const resumed = run(dir, ['resume', '--at', '11:00'])
+    assert.equal(resumed.data.entry.task, 'Standup')
+    assert.match(resumed.warnings.join(' '), /only finished entry/)
+  })
+
+  test('resume refuses when nothing has finished yet', (t) => {
+    const dir = tempDataDir(t)
+    run(dir, ['start', 'X', '--project', 'A', '--at', '09:00'])
+    assert.match(run(dir, ['resume'], { expectFail: true }).error, /no finished entries/)
+  })
 })
 
 describe('the output contract', () => {

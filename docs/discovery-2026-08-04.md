@@ -215,6 +215,10 @@ consecutive day the Raw/Attributed pair earned its place.
 days of real work, which continues to argue that this is a documentation decision rather than a code
 fix.
 
+**Superseded 2026-08-06**: bare `resume` was used, picked the wrong entry by ranking on start time,
+and was fixed in code — see **E** in `discovery-2026-07-28.md`. The "documentation decision" read
+was wrong; the first real use produced the bug.
+
 ---
 
 ## Still unverified
