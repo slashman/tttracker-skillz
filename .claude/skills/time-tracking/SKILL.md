@@ -49,7 +49,7 @@ chat history or meeting notes — it only knows what was tracked here.
 | "how parallel was today" / "how much was overlap" | `analyze` |
 | "give me the data" / "export it" | `export --from D --to D --format csv` |
 | "note that …" | `note --last <text>` |
-| "that's ticket ENG-412" | `link <query> linear=ENG-412` |
+| "that's ticket ENG-412" | `link <query> ticket=ENG-412` |
 | "actually that started at 8" | `edit <id> --start 8:00` |
 | "delete that entry" | `rm <id>` |
 | "back on what I was doing before" | `resume [query]` |
@@ -82,6 +82,11 @@ in between, and if anything else is running that `stop` goes ambiguous and refus
 that changed mid-clock, `split` cuts one entry in two at a single instant. Retyping a boundary as
 `HH:MM` against a stored second-precision timestamp silently manufactures a gap or an overlap; both
 commands take the boundary once and apply it to both sides.
+
+**One task per activity.** Task names describe the activity, not the ticket — `Account refresh —
+manual verification`, not the ticket title with the activity in a note. Reports group on the exact
+task string, so an activity buried in a note can never be broken out afterwards. The `ticket=` link
+is what ties a ticket's several task lines together.
 
 **A project is required.** If the user didn't name one, check `status` and `today` for context
 and the config's `defaultProject`. Ask only when it is genuinely unclear.
@@ -116,10 +121,15 @@ raw and attributed (`overlapMinutes`) is how much apparent effort was overlap.
 
 ## Rendering
 
-`today --json` / `report --json` → a markdown table grouped project → task, with per-project
-subtotals and a day total. Flag still-running entries and show their elapsed time. When
+`today --json` / `report --json` → a markdown table grouped project → task → ticket, with
+per-project subtotals and a day total. Flag still-running entries and show their elapsed time. When
 `--attribute` is on, show Raw and Attributed columns side by side. The CLI's own `message`
 field already contains a rendered markdown table you can use directly.
+
+**Rows are split by ticket, and the same activity on two tickets is two rows.** Each task carries a
+`ticket` (the entry's `links.ticket`, or `null`), and the markdown gains a `Ticket` column whenever
+anything in range has one. Don't merge those rows back together when you render — separate totals
+per ticket is the point. If the user asks for one number per activity, sum them and say you did.
 
 `analyze --json` → a compact summary: overlap factor, minutes at each concurrency level from
 `concurrencyHistogram`, and `contextSwitches`.
@@ -134,8 +144,15 @@ the title first, then start the entry with a link:
 
 ```
 mcp__claude_ai_Linear__*             # issue-reading tools; see the auth note below
-node ./bin/tracker.mjs start "Fix checkout webhook retry" --project client-co --link linear=ENG-412 --json
+node ./bin/tracker.mjs start "Fix checkout webhook retry" --project client-co --link ticket=ENG-412 --json
 ```
+
+**The key is always `ticket`, whatever the tracker is.** Not `linear=`, not `jira=`, not
+`github=` — one key, so a report can filter on it and a ticket's history stays in one place.
+The key space is free-form and nothing validates it, so a second spelling silently forks that
+history into two, and there is no repair command: fixing it means `edit --link` on every
+affected entry, found by hand. Reserve other keys for genuinely different things (`pr=`,
+`doc=`) on an entry that may also carry a `ticket=`.
 
 **Don't assume a server name — look at the tools actually available.** Linear MCP servers are
 installed per machine and namespaced differently depending on how they were added
@@ -150,7 +167,7 @@ authorization URL, then pass the callback URL from their browser to
 all — again, go by which tools are present.
 
 If no Linear server is available, or the user would rather not authorize right now, **degrade
-rather than fail**: record `--link linear=ENG-412` with the key alone and say the title couldn't
+rather than fail**: record `--link ticket=ENG-412` with the key alone and say the title couldn't
 be resolved. Never block starting an entry on an integration — the clock matters more than the
 title.
 

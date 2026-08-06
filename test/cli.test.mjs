@@ -279,6 +279,96 @@ describe('reports', () => {
   })
 })
 
+describe('tickets in reports', () => {
+  /** One activity name worked against two tickets, plus an untagged entry. */
+  const twoTickets = (t) => {
+    const dir = tempDataDir(t)
+    run(dir, ['log', 'PR review', '--project', 'P', '--from', '09:00', '--to', '09:40', '--link', 'ticket=ACME-1'])
+    run(dir, ['log', 'PR review', '--project', 'P', '--from', '10:00', '--to', '10:20', '--link', 'ticket=ACME-2'])
+    run(dir, ['log', 'Planning', '--project', 'P', '--from', '11:00', '--to', '11:30'])
+    return dir
+  }
+
+  test('one task worked against two tickets is two rows, not one merged total', (t) => {
+    const dir = twoTickets(t)
+    const tasks = run(dir, ['day']).data.projects[0].tasks
+    assert.deepEqual(
+      tasks.map((task) => [task.task, task.ticket, task.windowMinutes]),
+      [
+        ['PR review', 'ACME-1', 40],
+        ['PR review', 'ACME-2', 20],
+        ['Planning', null, 30],
+      ],
+    )
+  })
+
+  test('rows of one activity stay adjacent even when a bigger task sits between them', (t) => {
+    // Sorting leaves by their own minutes alone would put Planning (30m) between the
+    // two PR review rows (40m and 20m).
+    const dir = twoTickets(t)
+    const tasks = run(dir, ['day']).data.projects[0].tasks
+    assert.deepEqual(tasks.map((task) => task.task), ['PR review', 'PR review', 'Planning'])
+  })
+
+  test('the markdown table carries a Ticket column, blank where there is none', (t) => {
+    const dir = twoTickets(t)
+    const message = run(dir, ['day']).message
+    assert.match(message, /\| Project \/ task \| Ticket \| Time \|/)
+    assert.match(message, /PR review \| ACME-1 \| 40m \|/)
+    assert.match(message, /Planning \|\s*\| 30m \|/)
+  })
+
+  test('a report with no ticket anywhere keeps the old two-column shape', (t) => {
+    const dir = tempDataDir(t)
+    run(dir, ['log', 'Planning', '--project', 'P', '--from', '09:00', '--to', '09:30'])
+    const message = run(dir, ['day']).message
+    assert.match(message, /\| Project \/ task \| Time \|/)
+    assert.doesNotMatch(message, /Ticket/)
+  })
+
+  test('splitting by ticket keeps project rows equal to the sum of their children', (t) => {
+    const dir = twoTickets(t)
+    const report = run(dir, ['day', '--attribute', '--round', '15']).data
+    const project = report.projects[0]
+    const leaves = project.tasks.reduce((s, task) => s + task.roundedMinutes, 0)
+    assert.equal(leaves, project.roundedMinutes)
+    assert.equal(leaves, report.totals.roundedMinutes)
+  })
+
+  test('a vanished row names its ticket, so two rows of one task are told apart', (t) => {
+    const dir = tempDataDir(t)
+    run(dir, ['log', 'PR review', '--project', 'P', '--from', '09:00', '--to', '10:00', '--link', 'ticket=ACME-1'])
+    run(dir, ['log', 'PR review', '--project', 'P', '--from', '10:00', '--to', '10:04', '--link', 'ticket=ACME-2'])
+    const report = run(dir, ['day', '--round', '15'])
+    assert.deepEqual(
+      report.data.rounding.vanished.map((v) => [v.task, v.ticket]),
+      [['PR review', 'ACME-2']],
+    )
+    assert.ok(
+      report.warnings.some((w) => /rounded away to zero/.test(w) && /ACME-2/.test(w)),
+      `expected the ticket in the vanish warning, got ${JSON.stringify(report.warnings)}`,
+    )
+  })
+
+  test('the CSV report carries the ticket as its own column', (t) => {
+    const dir = twoTickets(t)
+    const csv = run(dir, ['day', '--format', 'csv']).message.split('\n')
+    assert.equal(csv[0], 'project,projectName,task,ticket,entryIds,rawMinutes,windowMinutes,attributedMinutes,roundedMinutes,open')
+    assert.match(csv[1], /^p,P,PR review,ACME-1,/)
+    assert.match(csv[3], /^p,P,Planning,,/)
+  })
+
+  test('links other than ticket do not split rows', (t) => {
+    const dir = tempDataDir(t)
+    run(dir, ['log', 'PR review', '--project', 'P', '--from', '09:00', '--to', '09:30', '--link', 'pr=812'])
+    run(dir, ['log', 'PR review', '--project', 'P', '--from', '10:00', '--to', '10:30', '--link', 'pr=813'])
+    const tasks = run(dir, ['day']).data.projects[0].tasks
+    assert.equal(tasks.length, 1)
+    assert.equal(tasks[0].ticket, null)
+    assert.equal(tasks[0].windowMinutes, 60)
+  })
+})
+
 describe('log', () => {
   test('writes one closed entry in a single command', (t) => {
     const dir = tempDataDir(t)
@@ -395,6 +485,52 @@ describe('export', () => {
     const csv = run(dir, ['export', '--format', 'csv']).message
     assert.match(csv, /"Fix ""retry"", again"/)
     assert.equal(csv.trim().split('\n').length, 2, 'the embedded comma must not create a new row')
+  })
+
+  test('json keeps tags and links structured, the way every other payload does', (t) => {
+    const dir = tempDataDir(t)
+    const started = run(dir, [
+      'start',
+      'Task A',
+      '--project',
+      'P',
+      '--at',
+      '09:00',
+      '--tags',
+      'bug,urgent',
+      '--link',
+      'ticket=ENG-412',
+    ])
+    run(dir, ['stop', '--all', '--at', '10:00'])
+    const [row] = run(dir, ['export']).data.rows
+    // A consumer must not have to know which command produced the row.
+    assert.deepEqual(row.links, started.data.entry.links)
+    assert.deepEqual(row.links, { ticket: 'ENG-412' })
+    assert.deepEqual(row.tags, ['bug', 'urgent'])
+  })
+
+  test('csv flattens tags and links, because a cell holds neither', (t) => {
+    const dir = tempDataDir(t)
+    run(dir, [
+      'start',
+      'Task A',
+      '--project',
+      'P',
+      '--at',
+      '09:00',
+      '--tags',
+      'bug,urgent',
+      '--link',
+      'ticket=ENG-412',
+      '--link',
+      'pr=812',
+    ])
+    run(dir, ['stop', '--all', '--at', '10:00'])
+    const csv = run(dir, ['export', '--format', 'csv']).message
+    const [header, row] = csv.trim().split('\n')
+    assert.equal(header.split(',').length, row.split(',').length, 'a flattened cell must not add columns')
+    assert.match(row, /bug\|urgent/)
+    assert.match(row, /ticket=ENG-412\|pr=812/)
   })
 })
 

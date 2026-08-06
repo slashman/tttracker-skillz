@@ -91,15 +91,20 @@ export function buildReport(cfg, opts) {
   const nowMs = nowDate.getTime()
   const projectMeta = new Map(loadProjects(cfg).map((p) => [p.id, p]))
 
-  // Group project -> task. Leaves are (project, task) pairs; that is the level
-  // rounding is applied at, so parent rows are always the sum of their children.
+  // Group project -> task -> ticket. Leaves are (project, task, ticket) triples;
+  // that is the level rounding is applied at, so parent rows are always the sum of
+  // their children. The ticket is part of the key because one activity name is
+  // routinely worked against several tickets in a day, and a merged row can never
+  // be broken out afterwards. Entries with no `ticket` link group under null.
   const leaves = new Map()
   for (const { entry, dateKey } of entries) {
-    const key = `${entry.project}\x00${entry.task}`
+    const ticket = entry.links?.ticket ?? null
+    const key = `${entry.project}\x00${entry.task}\x00${ticket ?? ''}`
     if (!leaves.has(key)) {
       leaves.set(key, {
         project: entry.project,
         task: entry.task,
+        ticket,
         entryIds: [],
         dateKeys: new Set(),
         rawMinutes: 0,
@@ -117,8 +122,25 @@ export function buildReport(cfg, opts) {
     if (entryEndMs(entry) == null) leaf.open = true
   }
 
+  // Rows of the same activity stay adjacent: sort by the (project, task) group's
+  // total first, then within the group. Sorting leaves by their own minutes alone
+  // would let an unrelated task land between two rows of one activity.
+  // Ordering follows the column actually displayed - the same basis rounding uses -
+  // so a bigger number never appears below a smaller one.
+  const sortBasis = (leaf) => (useAttribution ? leaf.attributedMinutes : leaf.windowMinutes)
+  const taskTotals = new Map()
+  for (const leaf of leaves.values()) {
+    const key = `${leaf.project}\x00${leaf.task}`
+    taskTotals.set(key, (taskTotals.get(key) ?? 0) + sortBasis(leaf))
+  }
+  const groupTotal = (leaf) => taskTotals.get(`${leaf.project}\x00${leaf.task}`)
   const leafList = [...leaves.values()].sort(
-    (a, b) => a.project.localeCompare(b.project) || b.attributedMinutes - a.attributedMinutes,
+    (a, b) =>
+      a.project.localeCompare(b.project) ||
+      groupTotal(b) - groupTotal(a) ||
+      a.task.localeCompare(b.task) ||
+      sortBasis(b) - sortBasis(a) ||
+      (a.ticket ?? '').localeCompare(b.ticket ?? ''),
   )
 
   // The column that gets rounded: attributed when attribution is on, otherwise the
@@ -137,13 +159,20 @@ export function buildReport(cfg, opts) {
       step,
       balanced: useAttribution ? balance : false,
       residual: round2(result.residual),
-      vanished: result.vanished.map((i) => ({ project: leafList[i].project, task: leafList[i].task, exactMinutes: round2(basis[i]) })),
+      vanished: result.vanished.map((i) => ({
+        project: leafList[i].project,
+        task: leafList[i].task,
+        ticket: leafList[i].ticket,
+        exactMinutes: round2(basis[i]),
+      })),
     }
     if (rounding.vanished.length > 0) {
       // Silence here is how a timesheet ends up quietly wrong.
       warnings.push(
         `${rounding.vanished.length} entr${rounding.vanished.length === 1 ? 'y' : 'ies'} rounded away to zero at ` +
-          `${step}m granularity: ${rounding.vanished.map((v) => `"${v.task}" (${round2(v.exactMinutes)}m)`).join(', ')}`,
+          `${step}m granularity: ${rounding.vanished
+            .map((v) => `"${v.task}"${v.ticket ? ` [${v.ticket}]` : ''} (${round2(v.exactMinutes)}m)`)
+            .join(', ')}`,
       )
     }
     if (Math.abs(rounding.residual) > 0.001) {
@@ -174,6 +203,7 @@ export function buildReport(cfg, opts) {
     if (step) p.roundedMinutes = round2(p.roundedMinutes + leaf.roundedMinutes)
     p.tasks.push({
       task: leaf.task,
+      ticket: leaf.ticket,
       entryIds: leaf.entryIds,
       dateKeys: [...leaf.dateKeys].sort(),
       open: leaf.open,
@@ -184,7 +214,9 @@ export function buildReport(cfg, opts) {
     })
   }
 
-  const projects = [...byProject.values()].sort((a, b) => b.attributedMinutes - a.attributedMinutes)
+  const projects = [...byProject.values()].sort((a, b) =>
+    useAttribution ? b.attributedMinutes - a.attributedMinutes : b.windowMinutes - a.windowMinutes,
+  )
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -285,10 +317,10 @@ export function buildExport(cfg, opts) {
       // The part inside the window, and the share of it this entry is charged.
       windowMinutes: round2(windowMinutes(entry, fromMs, toMs, nowMs)),
       attributedMinutes: round2(attribution.attributed[entry.id] ?? 0),
-      tags: entry.tags.join('|'),
-      links: Object.entries(entry.links)
-        .map(([k, v]) => `${k}=${v}`)
-        .join('|'),
+      // Structured, matching the day file and every other JSON payload. CSV
+      // flattening happens in the formatter - see exportRowsToCsv.
+      tags: [...entry.tags],
+      links: { ...entry.links },
       noteCount: entry.notes.length,
     })),
   }
@@ -314,30 +346,41 @@ export function reportToMarkdown(report) {
     return lines.join('\n')
   }
 
-  const header = attributed ? ['Project / task', 'Raw', 'Attributed'] : ['Project / task', 'Time']
+  // The ticket column appears only when something in range carries one, so a report
+  // over untagged work reads exactly as it did before.
+  const showTicket = report.projects.some((p) => p.tasks.some((t) => t.ticket))
+  const ticketCell = (value) => (showTicket ? [value] : [])
+
+  const header = ['Project / task', ...ticketCell('Ticket'), ...(attributed ? ['Raw', 'Attributed'] : ['Time'])]
   if (step) header.push(`Rounded (${step}m)`)
   lines.push(`| ${header.join(' | ')} |`)
-  lines.push(`| ${header.map((_, i) => (i === 0 ? ':--' : '--:')).join(' | ')} |`)
+  // Ticket keys are text, not numbers, so that column stays left-aligned.
+  lines.push(`| ${header.map((h) => (h === 'Project / task' || h === 'Ticket' ? ':--' : '--:')).join(' | ')} |`)
 
   for (const p of report.projects) {
     const row = attributed
-      ? [`**${p.name}**`, humanMinutes(p.rawMinutes), `**${humanMinutes(p.attributedMinutes)}**`]
-      : [`**${p.name}**`, `**${humanMinutes(p.windowMinutes)}**`]
+      ? [`**${p.name}**`, ...ticketCell(''), humanMinutes(p.rawMinutes), `**${humanMinutes(p.attributedMinutes)}**`]
+      : [`**${p.name}**`, ...ticketCell(''), `**${humanMinutes(p.windowMinutes)}**`]
     if (step) row.push(`**${humanMinutes(p.roundedMinutes)}**`)
     lines.push(`| ${row.join(' | ')} |`)
     for (const t of p.tasks) {
       const label = `  ${t.task}${t.open ? ' ⏱' : ''}`
       const trow = attributed
-        ? [label, humanMinutes(t.rawMinutes), humanMinutes(t.attributedMinutes)]
-        : [label, humanMinutes(t.windowMinutes)]
+        ? [label, ...ticketCell(t.ticket ?? ''), humanMinutes(t.rawMinutes), humanMinutes(t.attributedMinutes)]
+        : [label, ...ticketCell(t.ticket ?? ''), humanMinutes(t.windowMinutes)]
       if (step) trow.push(humanMinutes(t.roundedMinutes))
       lines.push(`| ${trow.join(' | ')} |`)
     }
   }
 
   const totalRow = attributed
-    ? ['**Total**', humanMinutes(report.totals.rawMinutes), `**${humanMinutes(report.totals.attributedMinutes)}**`]
-    : ['**Total**', `**${humanMinutes(report.totals.windowMinutes)}**`]
+    ? [
+        '**Total**',
+        ...ticketCell(''),
+        humanMinutes(report.totals.rawMinutes),
+        `**${humanMinutes(report.totals.attributedMinutes)}**`,
+      ]
+    : ['**Total**', ...ticketCell(''), `**${humanMinutes(report.totals.windowMinutes)}**`]
   if (step) totalRow.push(`**${humanMinutes(report.totals.roundedMinutes)}**`)
   lines.push(`| ${totalRow.join(' | ')} |`)
 
@@ -365,6 +408,40 @@ export function rowsToCsv(rows, columns) {
   return out.join('\n')
 }
 
+/** The column order for the flat export, shared by the CSV formatter and the docs. */
+export const EXPORT_COLUMNS = [
+  'id',
+  'dateKey',
+  'project',
+  'task',
+  'start',
+  'end',
+  'open',
+  'weight',
+  'rawMinutes',
+  'windowMinutes',
+  'attributedMinutes',
+  'tags',
+  'links',
+  'noteCount',
+]
+
+/**
+ * A CSV cell can't hold an array or an object, so `tags` and `links` are flattened
+ * here - at the formatter, not in the payload. The JSON export keeps them
+ * structured, the way the day files and every other JSON surface do.
+ */
+export function exportRowsToCsv(rows) {
+  const flat = rows.map((row) => ({
+    ...row,
+    tags: row.tags.join('|'),
+    links: Object.entries(row.links)
+      .map(([k, v]) => `${k}=${v}`)
+      .join('|'),
+  }))
+  return rowsToCsv(flat, EXPORT_COLUMNS)
+}
+
 export function reportToCsv(report) {
   const step = report.rounding?.step ?? null
   const rows = []
@@ -374,6 +451,9 @@ export function reportToCsv(report) {
         project: p.id,
         projectName: p.name,
         task: t.task,
+        // Empty rather than absent when an entry carries no ticket: a CSV column is
+        // fixed-width, and '' is what a spreadsheet reads as "none".
+        ticket: t.ticket ?? '',
         entryIds: t.entryIds.join('|'),
         rawMinutes: t.rawMinutes,
         windowMinutes: t.windowMinutes,
@@ -387,6 +467,7 @@ export function reportToCsv(report) {
     'project',
     'projectName',
     'task',
+    'ticket',
     'entryIds',
     'rawMinutes',
     'windowMinutes',

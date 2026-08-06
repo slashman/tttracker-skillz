@@ -20,9 +20,9 @@ import {
   buildAnalysis,
   buildExport,
   buildReport,
+  exportRowsToCsv,
   reportToCsv,
   reportToMarkdown,
-  rowsToCsv,
 } from '../src/report.mjs'
 import { humanMinutes, now } from '../src/time.mjs'
 
@@ -280,25 +280,7 @@ const COMMANDS = {
     const format = fmt(values, 'csv')
     return {
       data: result,
-      message:
-        format === 'csv'
-          ? rowsToCsv(result.rows, [
-              'id',
-              'dateKey',
-              'project',
-              'task',
-              'start',
-              'end',
-              'open',
-              'weight',
-              'rawMinutes',
-              'windowMinutes',
-              'attributedMinutes',
-              'tags',
-              'links',
-              'noteCount',
-            ])
-          : JSON.stringify(result, null, 2),
+      message: format === 'csv' ? exportRowsToCsv(result.rows) : JSON.stringify(result, null, 2),
       warnings: [],
     }
   },

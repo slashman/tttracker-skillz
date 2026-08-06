@@ -40,7 +40,7 @@ older files forward when it next writes them.
 | `start` / `end` | Local ISO **with offset**, not UTC `Z`, so the file reads naturally in its own git history. `end: null` means still running. |
 | `durationMinutes` | A convenience for humans reading the JSON. **Never a source of truth** — always recomputed from the two instants on read. |
 | `weight` | Positive number, default 1. Only meaningful to the `weighted` attribution strategy. |
-| `links` | Free-form `{key: value}`. The CLI is deliberately service-agnostic; `linear`, `jira`, `github` are just keys. |
+| `links` | Free-form `{key: value}`. The CLI is deliberately service-agnostic and validates no key. By convention the issue key is **`ticket`** regardless of tracker (`ticket=ENG-412`), so a ticket's history stays under one key; reserve other keys for genuinely different things (`pr`, `doc`). |
 
 Two rules worth knowing before reading day files directly:
 
@@ -127,11 +127,22 @@ node ./bin/tracker.mjs report --week --attribute --strategy equal --round 15 --f
 
 `data` contains `schemaVersion`, `range`, `attribution` (strategy, explanation, raw / attributed /
 union minutes, overlap factor), `rounding` (step, balanced, residual, vanished), `projects[]`
-grouped project → task with raw / window / attributed / rounded minutes, and `totals`.
+grouped project → task → ticket with raw / window / attributed / rounded minutes, and `totals`.
 `warnings[]` carries anything a generator must not silently drop.
 
 Rounded parent rows are always the sum of their rounded children, so columns add up as
 displayed.
+
+**Rows are split by ticket.** Each entry in `projects[].tasks[]` carries a `ticket` — the value of
+its `links.ticket`, or `null` for entries that have none — and the grouping key is the
+(project, task, ticket) triple, which is also the level rounding is applied at. One activity name
+worked against two tickets is therefore two rows with separate totals, because a merged row cannot
+be broken out afterwards; `rounding.vanished[]` names the `ticket` too, so two rows of one task are
+told apart. Only the `ticket` key splits rows — other links (`pr`, `doc`) do not. `--format md`
+shows a `Ticket` column only when something in range carries one; `--format csv` always emits a
+`ticket` column, empty where there is none. Rows are ordered by the column actually displayed
+(attributed when `--attribute` is on, otherwise in-window minutes), with rows of one activity kept
+adjacent.
 
 ## Flat export
 
@@ -146,3 +157,10 @@ windowMinutes, attributedMinutes, tags, links, noteCount`.
 
 `rawMinutes` is the entry's full duration; `windowMinutes` is the part inside the requested
 range; `attributedMinutes` is the share of that charged to this entry after overlap is resolved.
+
+**`tags` and `links` keep their structured shape in `--format json`** — an array and a
+`{key: value}` object, matching the day files and every other JSON payload, so a consumer never
+has to know which command produced a row. Only `--format csv` flattens them, to `bug|urgent` and
+`ticket=ENG-412|pr=812`, because a CSV cell holds neither. Consumers of `--format json` written
+against the pre-2026-08 shape, where both fields were `|`-joined strings on this surface alone,
+need updating; `schemaVersion` stays **1**, as nothing downstream consumed it.
