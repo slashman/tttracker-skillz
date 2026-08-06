@@ -279,6 +279,102 @@ describe('reports', () => {
   })
 })
 
+describe('log', () => {
+  test('writes one closed entry in a single command', (t) => {
+    const dir = tempDataDir(t)
+    const res = run(dir, ['log', 'Orion sync', '--project', 'orion', '--from', '8:00', '--to', '8:40'])
+    assert.equal(res.data.entry.end != null, true, 'the entry must land closed')
+    assert.equal(res.data.durationMinutes, 40)
+    assert.equal(run(dir, ['status']).data.concurrency, 0, 'log must never leave a clock running')
+  })
+
+  test('is unaffected by an open clock, unlike start-then-stop', (t) => {
+    const dir = tempDataDir(t)
+    run(dir, ['start', 'Long running thing', '--project', 'P', '--at', '09:00'])
+    // The two-command backfill would make a bare `stop` ambiguous here; log cannot.
+    const res = run(dir, ['log', 'A meeting', '--project', 'P', '--from', '10:00', '--to', '11:00'])
+    assert.equal(res.data.durationMinutes, 60)
+    assert.equal(run(dir, ['status']).data.concurrency, 1, 'the pre-existing clock must be untouched')
+  })
+
+  test('carries tags, links and a note, and rejects a backwards range', (t) => {
+    const dir = tempDataDir(t)
+    const res = run(dir, [
+      'log', 'Review', '--project', 'P', '--from', '9:00', '--to', '9:30',
+      '--tags', 'bug', '--link', 'ticket=ENG-1', '--note', 'done',
+    ])
+    assert.deepEqual(res.data.entry.links, { ticket: 'ENG-1' })
+    assert.deepEqual(res.data.entry.tags, ['bug'])
+    assert.equal(res.data.entry.notes.length, 1)
+
+    const bad = run(dir, ['log', 'Backwards', '--project', 'P', '--from', '10:00', '--to', '9:00'], { expectFail: true })
+    assert.match(bad.error, /--to is before --from/)
+  })
+
+  test('requires both ends of the range', (t) => {
+    const dir = tempDataDir(t)
+    const res = run(dir, ['log', 'Half a range', '--project', 'P', '--from', '9:00'], { expectFail: true })
+    assert.match(res.error, /--from and --to/)
+    assert.match(res.hint, /`start`/, 'the hint should point at the running-clock command')
+  })
+})
+
+describe('split', () => {
+  test('cuts a closed entry in two with no gap and no overlap', (t) => {
+    const dir = tempDataDir(t)
+    run(dir, ['start', 'verification', '--project', 'P', '--at', '09:00'])
+    const stopped = run(dir, ['stop', '--at', '10:00']).data.stopped[0]
+    const res = run(dir, ['split', stopped.id, '--at', '09:20', '--task', 'code vetting'])
+
+    assert.equal(res.data.first.durationMinutes, 20)
+    assert.equal(res.data.second.durationMinutes, 40)
+    assert.equal(res.data.first.end, res.data.second.start, 'one boundary value, so no gap and no overlap')
+    assert.equal(res.data.second.task, 'code vetting')
+    assert.equal(res.data.first.task, 'verification', 'the first half keeps its name unless renamed')
+  })
+
+  test('an open entry stays open: the second half inherits the clock', (t) => {
+    const dir = tempDataDir(t)
+    const started = run(dir, ['start', 'one thing', '--project', 'P', '--at', '09:00'])
+    const res = run(dir, ['split', started.data.entry.id, '--at', '09:30', '--task', 'another thing'])
+
+    assert.equal(res.data.second.open, true)
+    assert.equal(res.data.first.end, '2026-07-27T09:30:00-05:00')
+    const status = run(dir, ['status'])
+    assert.equal(status.data.concurrency, 1)
+    assert.equal(status.data.open[0].task, 'another thing')
+  })
+
+  test('inherits project, tags, weight and links, and can rename both halves', (t) => {
+    const dir = tempDataDir(t)
+    run(dir, [
+      'start', 'ticket title', '--project', 'P', '--at', '09:00',
+      '--tags', 'a,b', '--weight', '0.5', '--link', 'ticket=ENG-1',
+    ])
+    const stopped = run(dir, ['stop', '--at', '10:00']).data.stopped[0]
+    const res = run(dir, [
+      'split', stopped.id, '--at', '09:30', '--first-task', 'first activity', '--task', 'second activity',
+    ])
+
+    assert.equal(res.data.first.task, 'first activity')
+    assert.equal(res.data.second.task, 'second activity')
+    assert.deepEqual(res.data.second.links, { ticket: 'ENG-1' })
+    assert.deepEqual(res.data.second.tags, ['a', 'b'])
+    assert.equal(res.data.second.weight, 0.5)
+    assert.equal(res.data.second.project, 'p')
+  })
+
+  test('refuses a cut outside the entry, which would produce a zero-length half', (t) => {
+    const dir = tempDataDir(t)
+    run(dir, ['start', 'thing', '--project', 'P', '--at', '09:00'])
+    const stopped = run(dir, ['stop', '--at', '10:00']).data.stopped[0]
+
+    assert.match(run(dir, ['split', stopped.id, '--at', '09:00'], { expectFail: true }).error, /at or before the start/)
+    assert.match(run(dir, ['split', stopped.id, '--at', '10:00'], { expectFail: true }).error, /at or after the end/)
+    assert.match(run(dir, ['split', stopped.id, '--at', '08:00'], { expectFail: true }).error, /at or before the start/)
+  })
+})
+
 describe('export', () => {
   test('emits one flat row per entry with raw and attributed columns', (t) => {
     const dir = tempDataDir(t)

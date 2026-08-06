@@ -37,6 +37,8 @@ chat history or meeting notes — it only knows what was tracked here.
 | "also starting Y" / "I'm working on Y too" | `start` again — do **not** stop anything |
 | "I stopped working on X" / "clock out of X" | `stop <query>` |
 | "I'm done for now" (one thing running) | `stop` |
+| "I did X from 9 to 10" / "I had a meeting 11 to 12" | `log <task words> --project <P> --from 9:00 --to 10:00` |
+| "I finished X, now doing Y" (same clock, new activity) | `split <id> --at <when> --first-task X --task Y` |
 | "I'm now working on Y instead" | `switch <task words> --project <P>` |
 | "what am I working on" / "what's running" | `status` |
 | "today's hours" / "today's work sheet" | `today` |
@@ -73,6 +75,13 @@ Do not pick the oldest, the newest, or the one that seems most likely.
 
 **`switch` is destructive.** It closes *everything* currently open before starting the new
 entry. Report every entry it closed, with durations, from `data.closed`.
+
+**Never hand-build a finished entry or a boundary.** For work that is already over, `log` writes a
+closed entry in one command — `start --at` followed by `stop --at` leaves the entry genuinely open
+in between, and if anything else is running that `stop` goes ambiguous and refuses. For an activity
+that changed mid-clock, `split` cuts one entry in two at a single instant. Retyping a boundary as
+`HH:MM` against a stored second-precision timestamp silently manufactures a gap or an overlap; both
+commands take the boundary once and apply it to both sides.
 
 **A project is required.** If the user didn't name one, check `status` and `today` for context
 and the config's `defaultProject`. Ask only when it is genuinely unclear.

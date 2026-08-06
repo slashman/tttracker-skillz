@@ -6,8 +6,10 @@ import {
   addLink,
   addNote,
   editEntry,
+  logEntry,
   removeEntry,
   resumeEntry,
+  splitEntry,
   startEntry,
   statusOf,
   stopEntries,
@@ -46,6 +48,7 @@ const OPTIONS = {
   strategy: { type: 'string' },
   'no-balance': { type: 'boolean' },
   task: { type: 'string' },
+  'first-task': { type: 'string' },
   start: { type: 'string' },
   end: { type: 'string' },
 }
@@ -54,6 +57,8 @@ const USAGE = `tracker — time tracking for parallel work
 
   start <task words…>   --project P [--at T] [--tags a,b] [--weight N] [--link k=v] [--note N]
   stop [query]          [--all] [--at T] [--note N]
+  log <task words…>     --project P --from T --to T [--tags a,b] [--weight N] [--link k=v] [--note N]
+  split <id>            --at T [--task T] [--first-task T] [--note N]
   switch <task words…>  --project P
   status
   today | day [date]    [--attribute] [--strategy S] [--round N]
@@ -147,6 +152,44 @@ const COMMANDS = {
       message: result.stopped
         .map((s) => `stopped ${s.id} ${s.project}: ${s.task} (${humanMinutes(s.durationMinutes)})`)
         .join('; '),
+      warnings: result.warnings,
+    }
+  },
+
+  log(cfg, values, positionals, nowDate) {
+    const result = logEntry(cfg, {
+      nowDate,
+      task: values.task ?? positionals.join(' '),
+      project: values.project,
+      from: values.from,
+      to: values.to,
+      tags: values.tags,
+      weight: num(values.weight, '--weight'),
+      link: values.link,
+      note: values.note,
+    })
+    return {
+      data: result,
+      message: `logged ${result.entry.id} ${result.entry.project}: ${result.entry.task} (${humanMinutes(result.durationMinutes)})`,
+      warnings: result.warnings,
+    }
+  },
+
+  split(cfg, values, positionals, nowDate) {
+    const result = splitEntry(cfg, {
+      nowDate,
+      id: positionals.shift(),
+      at: values.at,
+      task: values.task,
+      firstTask: values['first-task'],
+      note: values.note,
+    })
+    const tail = result.second.open ? 'still running' : humanMinutes(result.second.durationMinutes)
+    return {
+      data: result,
+      message:
+        `split ${result.first.id}: ${result.first.task} (${humanMinutes(result.first.durationMinutes)}) ` +
+        `→ ${result.second.id}: ${result.second.task} (${tail})`,
       warnings: result.warnings,
     }
   },

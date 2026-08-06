@@ -149,6 +149,133 @@ export function startEntry(cfg, opts) {
   }
 }
 
+/**
+ * One closed entry, one write. The two-command `start --at` + `stop --at` dance this
+ * replaces is not just clumsy: between the two commands the entry is genuinely open,
+ * so a crash leaves a dangling clock, and if anything else was already running the
+ * `stop` goes ambiguous and refuses. Neither can happen here - nothing is ever open.
+ */
+export function logEntry(cfg, opts) {
+  const { nowDate } = opts
+  const task = String(opts.task ?? '').trim()
+  if (!task) throw new TrackerError('no task description given', { hint: 'For example: log sync --from 8:00 --to 8:40' })
+  if (!opts.from || !opts.to) {
+    throw new TrackerError('log needs --from and --to', {
+      hint: 'For example: log "Orion sync" --project orion --from 8:00 --to 8:40. To start a running clock, use `start`.',
+    })
+  }
+
+  const projectInput = opts.project ?? cfg.defaultProject
+  if (!projectInput) {
+    throw new TrackerError('no project given', {
+      hint: 'Pass --project <name>, or set defaultProject in tracker.config.json.',
+    })
+  }
+  const resolved = resolveProject(cfg, projectInput)
+
+  const startMs = resolveAt(cfg, opts.from, nowDate, { flag: '--from' })
+  const endMs = resolveAt(cfg, opts.to, nowDate, { flag: '--to' })
+  if (endMs < startMs) {
+    throw new TrackerError('--to is before --from', {
+      hint: `Got --from ${toLocalISO(new Date(startMs), cfg.tz)} and --to ${toLocalISO(new Date(endMs), cfg.tz)}.`,
+    })
+  }
+
+  const dateKey = localDateKey(new Date(startMs), cfg.tz)
+  const entry = saveInto(cfg, dateKey, (day) => {
+    const created = {
+      id: newId(day.entries.map((e) => e.id)),
+      project: resolved.id,
+      task,
+      start: toLocalISO(new Date(startMs), cfg.tz),
+      end: toLocalISO(new Date(endMs), cfg.tz),
+      weight: Number.isFinite(opts.weight) && opts.weight > 0 ? opts.weight : 1,
+      tags: parseTags(opts.tags),
+      notes: opts.note ? [{ at: toLocalISO(nowDate, cfg.tz), text: String(opts.note) }] : [],
+      links: parseLinks(opts.link),
+    }
+    day.entries.push(created)
+    return created
+  })
+
+  return {
+    entry,
+    dateKey,
+    project: resolved.project,
+    projectCreated: resolved.created,
+    durationMinutes: round2(minutesBetween(startMs, endMs)),
+    warnings: [...resolved.warnings, ...maybeAutoCommit(cfg, `log ${entry.id} ${task}`)],
+  }
+}
+
+/**
+ * Cuts one entry in two at an instant, for when the activity changed but the clock
+ * did not. The boundary is a single value used for both halves, so unlike closing
+ * one entry and opening another by hand it cannot leave a gap or an overlap between
+ * them. An open entry stays open: the second half inherits the running clock.
+ */
+export function splitEntry(cfg, opts) {
+  const { nowDate } = opts
+  const found = findById(cfg, opts.id)
+  if (!opts.at) throw new TrackerError('split needs --at', { hint: 'Where to cut, e.g. --at 15:58 or --at -20m.' })
+
+  const atMs = resolveAt(cfg, opts.at, nowDate, { allowFuture: true, flag: '--at' })
+  const startMs = entryStartMs(found.entry)
+  const wasOpen = found.entry.end == null
+
+  if (atMs <= startMs) {
+    throw new TrackerError('--at is at or before the start of the entry', {
+      hint: `${describe(found.entry)} starts ${found.entry.start}. A split must leave time on both sides.`,
+    })
+  }
+  if (!wasOpen && atMs >= entryEndMs(found.entry)) {
+    throw new TrackerError('--at is at or after the end of the entry', {
+      hint: `${describe(found.entry)} ends ${found.entry.end}. A split must leave time on both sides.`,
+    })
+  }
+
+  const boundary = toLocalISO(new Date(atMs), cfg.tz)
+  const originalEnd = found.entry.end
+
+  const first = saveInto(cfg, found.dateKey, (day) => {
+    const e = day.entries.find((x) => x.id === found.entry.id)
+    e.end = boundary
+    if (opts.firstTask != null) e.task = String(opts.firstTask).trim()
+    return { ...e }
+  })
+
+  // The cut can land on the far side of a local-day boundary, and an entry always
+  // lives in the file of its start date.
+  const secondDateKey = localDateKey(new Date(atMs), cfg.tz)
+  const second = saveInto(cfg, secondDateKey, (day) => {
+    const created = {
+      id: newId(day.entries.map((e) => e.id)),
+      project: first.project,
+      task: opts.task != null ? String(opts.task).trim() : first.task,
+      start: boundary,
+      end: originalEnd,
+      weight: first.weight,
+      tags: [...first.tags],
+      notes: opts.note ? [{ at: toLocalISO(nowDate, cfg.tz), text: String(opts.note) }] : [],
+      links: { ...first.links },
+    }
+    day.entries.push(created)
+    return created
+  })
+
+  const nowMs = nowDate.getTime()
+  return {
+    first: { ...first, dateKey: found.dateKey, durationMinutes: round2(minutesBetween(startMs, atMs)) },
+    second: {
+      ...second,
+      dateKey: secondDateKey,
+      open: second.end == null,
+      durationMinutes: round2(minutesBetween(atMs, second.end == null ? nowMs : entryEndMs(second))),
+    },
+    warnings: maybeAutoCommit(cfg, `split ${first.id} -> ${second.id}`),
+  }
+}
+
 export function stopEntries(cfg, opts) {
   const { nowDate } = opts
   const open = findOpenEntries(cfg, { nowDate })
