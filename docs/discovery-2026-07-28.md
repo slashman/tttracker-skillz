@@ -81,7 +81,9 @@ returned to, with a warning naming what was skipped. The window is measured agai
 instant, not wall-clock now, so `stop --at 14:00` followed by `resume --at 14:00` is caught too.
 When the just-stopped entry is the only finished one it is still resumed — there is nothing earlier
 to return to — but the warning says so out loud. The result carries `resumedFrom` so the pick is
-auditable. Four tests added; 166 pass. The skill does **not** need to mandate a query.
+auditable. Four tests added; 166 pass. The skill does **not** need to mandate a query. Why this
+finding needed a second half, and why only a parallel tracker has the problem at all, is written up
+as **AJ** in [`discovery-2026-08-06.md`](discovery-2026-08-06.md).
 
 ## F. No first-class way to log an already-finished activity
 "just finished the Orion sync, it went from 8 to 8:40" — never clocked in. Recording it took
