@@ -53,7 +53,22 @@ export function entryEndMs(entry) {
 function normalizeEntry(entry) {
   const out = { ...entry }
   out.tags = Array.isArray(out.tags) ? out.tags : []
-  out.notes = Array.isArray(out.notes) ? out.notes : []
+  // schemaVersion 1 kept a list of timestamped notes; 2 keeps one string. Old files fold
+  // forward here rather than in a migration pass, so nothing is lost and no file is rewritten
+  // until it is next written for its own reasons. The timestamps are dropped deliberately:
+  // a note describes the entry, and the entry already carries the times that matter.
+  if (Array.isArray(out.notes)) {
+    const text = out.notes
+      .map((n) => (typeof n === 'string' ? n : (n?.text ?? '')))
+      .map((t) => String(t).trim())
+      .filter(Boolean)
+      .join('; ')
+    out.note = text || null
+    delete out.notes
+  } else {
+    const text = typeof out.note === 'string' ? out.note.trim() : ''
+    out.note = text || null
+  }
   out.links = out.links && typeof out.links === 'object' ? out.links : {}
   out.weight = Number.isFinite(out.weight) && out.weight > 0 ? out.weight : 1
   if (out.end == null) {

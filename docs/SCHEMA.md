@@ -1,6 +1,11 @@
 # Data and output contract
 
-`schemaVersion` is currently **1**. It appears on every day file and every JSON payload.
+`schemaVersion` is currently **2**. It appears on every day file and every JSON payload.
+
+**Version 2 (2026-08-06)** replaced the per-entry `notes` list with a single `note` string. Version 1
+files are folded forward on read — the note texts are joined with `"; "` in order and the
+`at` timestamps are dropped — and the file itself is only rewritten when it is next written for its
+own reasons. Export rows carry `note` (the text, or `null`) where they used to carry `noteCount`.
 
 This data is meant to outlive the code that wrote it — that's the point of the tool — so a
 reader is never left guessing what shape it has. `store.mjs` **refuses** a day file whose
@@ -13,7 +18,7 @@ older files forward when it next writes them.
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "date": "2026-07-27",
   "tz": "America/Bogota",
   "entries": [
@@ -26,7 +31,7 @@ older files forward when it next writes them.
       "durationMinutes": 88,
       "weight": 1,
       "tags": ["bug"],
-      "notes": [{ "at": "2026-07-27T10:05:00-05:00", "text": "root cause: idempotency key" }],
+      "note": "root cause: idempotency key",
       "links": { "linear": "ENG-412" }
     }
   ]
@@ -40,6 +45,7 @@ older files forward when it next writes them.
 | `start` / `end` | Local ISO **with offset**, not UTC `Z`, so the file reads naturally in its own git history. `end: null` means still running. |
 | `durationMinutes` | A convenience for humans reading the JSON. **Never a source of truth** — always recomputed from the two instants on read. |
 | `weight` | Positive number, default 1. Only meaningful to the `weighted` attribution strategy. |
+| `note` | One free-text string, or `null`. An **attribute of the entry**, not a log: writing a second note replaces the first, and the replaced text is echoed back so it can be retyped. `note <query> --rm` clears it. |
 | `links` | Free-form `{key: value}`. The CLI is deliberately service-agnostic and validates no key. By convention the issue key is **`ticket`** regardless of tracker (`ticket=ENG-412`), so a ticket's history stays under one key; reserve other keys for genuinely different things (`pr`, `doc`). |
 
 Two rules worth knowing before reading day files directly:
@@ -56,8 +62,8 @@ Two rules worth knowing before reading day files directly:
 Every command with `--json` writes exactly one line to stdout and nothing else:
 
 ```json
-{ "ok": true,  "schemaVersion": 1, "command": "start", "data": {}, "message": "", "warnings": [] }
-{ "ok": false, "schemaVersion": 1, "command": "start", "error": "…", "hint": "…" }
+{ "ok": true,  "schemaVersion": 2, "command": "start", "data": {}, "message": "", "warnings": [] }
+{ "ok": false, "schemaVersion": 2, "command": "start", "error": "…", "hint": "…" }
 ```
 
 Failure exits 1. Unknown commands and unknown flags produce the failure envelope too — a
@@ -153,7 +159,7 @@ node ./bin/tracker.mjs export --from 2026-07-01 --to 2026-07-31 --attribute --fo
 ```
 
 One row per entry: `id, dateKey, project, task, start, end, open, weight, rawMinutes,
-windowMinutes, attributedMinutes, tags, links, noteCount`.
+windowMinutes, attributedMinutes, tags, links, note`.
 
 `rawMinutes` is the entry's full duration; `windowMinutes` is the part inside the requested
 range; `attributedMinutes` is the share of that charged to this entry after overlap is resolved.
@@ -163,4 +169,5 @@ range; `attributedMinutes` is the share of that charged to this entry after over
 has to know which command produced a row. Only `--format csv` flattens them, to `bug|urgent` and
 `ticket=ENG-412|pr=812`, because a CSV cell holds neither. Consumers of `--format json` written
 against the pre-2026-08 shape, where both fields were `|`-joined strings on this surface alone,
-need updating; `schemaVersion` stays **1**, as nothing downstream consumed it.
+need updating. That change did not move `schemaVersion`, as nothing downstream consumed it; the
+`notes` → `note` change on 2026-08-06 did, and took it to **2**.

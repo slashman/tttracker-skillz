@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import test, { describe } from 'node:test'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+import { SCHEMA_VERSION } from '../src/config.mjs'
 import { dayFilePath } from '../src/store.mjs'
-import { run, runRaw, tempDataDir } from './helpers.mjs'
+import { TZ, run, runRaw, tempDataDir } from './helpers.mjs'
 
 const NOW = '2026-07-27T17:00:00-05:00'
 const dayFile = (dir, key) => JSON.parse(readFileSync(dayFilePath({ dataDir: dir }, key), 'utf8'))
@@ -395,7 +397,7 @@ describe('log', () => {
     ])
     assert.deepEqual(res.data.entry.links, { ticket: 'ENG-1' })
     assert.deepEqual(res.data.entry.tags, ['bug'])
-    assert.equal(res.data.entry.notes.length, 1)
+    assert.equal(res.data.entry.note, 'done')
 
     const bad = run(dir, ['log', 'Backwards', '--project', 'P', '--from', '10:00', '--to', '9:00'], { expectFail: true })
     assert.match(bad.error, /--to is before --from/)
@@ -594,8 +596,7 @@ describe('notes, links, edit, rm, resume', () => {
     const dir = tempDataDir(t)
     run(dir, ['start', 'X', '--project', 'A', '--at', '09:00'])
     const noted = run(dir, ['note', '--last', 'root', 'cause:', 'idempotency', 'key'])
-    assert.equal(noted.data.entry.notes.length, 1)
-    assert.equal(noted.data.entry.notes[0].text, 'root cause: idempotency key')
+    assert.equal(noted.data.entry.note, 'root cause: idempotency key')
   })
 
   test('note --last is ambiguous with several running', (t) => {
@@ -603,6 +604,34 @@ describe('notes, links, edit, rm, resume', () => {
     run(dir, ['start', 'X', '--project', 'A', '--at', '09:00'])
     run(dir, ['start', 'Y', '--project', 'A', '--at', '09:30'])
     assert.match(run(dir, ['note', '--last', 'hi'], { expectFail: true }).error, /--last is ambiguous/)
+  })
+
+  test('note --rm clears the note and echoes what it removed', (t) => {
+    const dir = tempDataDir(t)
+    const id = run(dir, ['log', 'X', '--project', 'A', '--from', '09:00', '--to', '10:00']).data.entry.id
+    run(dir, ['note', id, 'first'])
+    const removed = run(dir, ['note', id, '--rm'])
+    assert.equal(removed.data.removed, 'first')
+    assert.equal(removed.data.entry.note, null)
+    assert.match(removed.message, /"first"/)
+  })
+
+  test('a second note replaces the first, and the replaced text is echoed', (t) => {
+    // `note` is one attribute, not a log: writing a second one is a replacement, and
+    // silently discarding the old text is how a note goes missing without a trace.
+    const dir = tempDataDir(t)
+    const id = run(dir, ['log', 'X', '--project', 'A', '--from', '09:00', '--to', '10:00']).data.entry.id
+    run(dir, ['note', id, 'first'])
+    const second = run(dir, ['note', id, 'second'])
+    assert.equal(second.data.entry.note, 'second')
+    assert.equal(second.data.replaced, 'first')
+    assert.match(second.message, /replaced: "first"/)
+  })
+
+  test('note --rm on an entry with no note refuses', (t) => {
+    const dir = tempDataDir(t)
+    const id = run(dir, ['log', 'X', '--project', 'A', '--from', '09:00', '--to', '10:00']).data.entry.id
+    assert.match(run(dir, ['note', id, '--rm'], { expectFail: true }).error, /has no note/)
   })
 
   test('link attaches a key=value pair', (t) => {
@@ -693,6 +722,60 @@ describe('notes, links, edit, rm, resume', () => {
   })
 })
 
+describe('schemaVersion 1 → 2 (notes list → note attribute)', () => {
+  const writeV1Day = (dir, notes) => {
+    const file = dayFilePath({ dataDir: dir }, '2026-07-27')
+    mkdirSync(path.dirname(file), { recursive: true })
+    writeFileSync(
+      file,
+      JSON.stringify({
+        schemaVersion: 1,
+        date: '2026-07-27',
+        tz: TZ,
+        entries: [
+          {
+            id: 'old001',
+            project: 'a',
+            task: 'Legacy entry',
+            start: '2026-07-27T09:00:00-05:00',
+            end: '2026-07-27T10:00:00-05:00',
+            weight: 1,
+            tags: [],
+            notes,
+            links: {},
+          },
+        ],
+      }),
+    )
+    return dir
+  }
+
+  test('several timestamped notes fold into one string, joined and in order', (t) => {
+    const dir = writeV1Day(tempDataDir(t), [
+      { at: '2026-07-27T09:10:00-05:00', text: 'verify no regressions on mobile' },
+      { at: '2026-07-27T09:50:00-05:00', text: 'smoke tests on mobile successful' },
+    ])
+    const rows = run(dir, ['export', '--from', '2026-07-27', '--to', '2026-07-27']).data.rows
+    assert.equal(rows[0].note, 'verify no regressions on mobile; smoke tests on mobile successful')
+  })
+
+  test('an empty notes list becomes null, not an empty string', (t) => {
+    const dir = writeV1Day(tempDataDir(t), [])
+    assert.equal(run(dir, ['export', '--from', '2026-07-27', '--to', '2026-07-27']).data.rows[0].note, null)
+  })
+
+  test('the file is rewritten at version 2 only when it is next written', (t) => {
+    const dir = writeV1Day(tempDataDir(t), [{ at: '2026-07-27T09:10:00-05:00', text: 'kept' }])
+    assert.equal(dayFile(dir, '2026-07-27').schemaVersion, 1, 'reading must not rewrite')
+
+    run(dir, ['note', 'old001', 'rewritten'])
+    const after = dayFile(dir, '2026-07-27')
+    assert.equal(after.schemaVersion, SCHEMA_VERSION)
+    assert.equal(after.entries[0].note, 'rewritten')
+    assert.equal(after.entries[0].notes, undefined, 'the old list must not survive the rewrite')
+  })
+})
+
 describe('the output contract', () => {
   test('every command emits a well-formed success envelope', (t) => {
     const dir = tempDataDir(t)
@@ -708,7 +791,7 @@ describe('the output contract', () => {
     ]) {
       const result = run(dir, args)
       assert.equal(result.ok, true, `${args[0]} should succeed`)
-      assert.equal(result.schemaVersion, 1, `${args[0]} must carry schemaVersion`)
+      assert.equal(result.schemaVersion, SCHEMA_VERSION, `${args[0]} must carry schemaVersion`)
       assert.equal(result.command, args[0])
       assert.ok(Array.isArray(result.warnings), `${args[0]} must have a warnings array`)
       assert.equal(result.status, 0)

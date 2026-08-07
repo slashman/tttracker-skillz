@@ -49,6 +49,7 @@ chat history or meeting notes — it only knows what was tracked here.
 | "how parallel was today" / "how much was overlap" | `analyze` |
 | "give me the data" / "export it" | `export --from D --to D --format csv` |
 | "note that …" | `note --last <text>` |
+| "scratch that note" / "take that note off" | `note <query> --rm` |
 | "that's ticket ENG-412" | `link <query> ticket=ENG-412` |
 | "actually that started at 8" | `edit <id> --start 8:00` |
 | "delete that entry" | `rm <id>` |
@@ -87,6 +88,11 @@ commands take the boundary once and apply it to both sides.
 manual verification`, not the ticket title with the activity in a note. Reports group on the exact
 task string, so an activity buried in a note can never be broken out afterwards. The `ticket=` link
 is what ties a ticket's several task lines together.
+
+**A note is one attribute, not a log.** Each entry carries a single `note` string. Writing a second
+one **replaces** the first — the response echoes the replaced text, so relay it rather than letting
+it disappear. Notes describe the work in that entry's window; anything about *future* or deferred
+work does not belong on a past entry, because it will read as tracked effort later.
 
 **A project is required.** If the user didn't name one, check `status` and `today` for context
 and the config's `defaultProject`. Ask only when it is genuinely unclear.

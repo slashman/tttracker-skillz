@@ -8,6 +8,7 @@ import {
   editEntry,
   logEntry,
   removeEntry,
+  removeNote,
   resumeEntry,
   splitEntry,
   startEntry,
@@ -51,6 +52,7 @@ const OPTIONS = {
   'first-task': { type: 'string' },
   start: { type: 'string' },
   end: { type: 'string' },
+  rm: { type: 'boolean' },
 }
 
 const USAGE = `tracker — time tracking for parallel work
@@ -66,7 +68,7 @@ const USAGE = `tracker — time tracking for parallel work
                         [--round N] [--no-balance] [--format md|json|csv]
   analyze               [--from D --to D | --week | --month]
   export                [--from D --to D | --week | --month] [--attribute] [--format json|csv]
-  note <query|--last> <text…>
+  note <query|--last> <text…> | <query|--last> --rm
   link <query> <key=value…>
   edit <id>             [--task T] [--project P] [--start T] [--end T|null] [--tags a,b] [--weight N] [--link k=v]
   rm <id>
@@ -288,8 +290,24 @@ const COMMANDS = {
   note(cfg, values, positionals, nowDate) {
     const last = values.last === true
     const query = last ? null : positionals.shift()
+    if (values.rm === true) {
+      const result = removeNote(cfg, { nowDate, last, query })
+      return {
+        data: result,
+        // Printed in full so a mistaken removal can be retyped from this line.
+        message: `removed note from ${result.entry.id}: "${result.removed}"`,
+        warnings: result.warnings,
+      }
+    }
     const result = addNote(cfg, { nowDate, last, query, text: positionals.join(' ') })
-    return { data: result, message: `noted on ${result.entry.id}: ${result.entry.task}`, warnings: result.warnings }
+    return {
+      data: result,
+      // A replaced note is called out: writing one silently discards the old text.
+      message: result.replaced
+        ? `noted on ${result.entry.id}: ${result.entry.task} (replaced: "${result.replaced}")`
+        : `noted on ${result.entry.id}: ${result.entry.task}`,
+      warnings: result.warnings,
+    }
   },
 
   link(cfg, values, positionals, nowDate) {

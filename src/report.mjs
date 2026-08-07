@@ -321,7 +321,7 @@ export function buildExport(cfg, opts) {
       // flattening happens in the formatter - see exportRowsToCsv.
       tags: [...entry.tags],
       links: { ...entry.links },
-      noteCount: entry.notes.length,
+      note: entry.note ?? null,
     })),
   }
 }
@@ -423,7 +423,7 @@ export const EXPORT_COLUMNS = [
   'attributedMinutes',
   'tags',
   'links',
-  'noteCount',
+  'note',
 ]
 
 /**

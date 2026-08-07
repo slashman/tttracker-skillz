@@ -10,7 +10,7 @@ import { TrackerError } from './errors.mjs'
  * data that outlives this code can still be read deliberately rather than
  * guessed at. See docs/SCHEMA.md.
  */
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 export const STRATEGIES = ['equal', 'weighted', 'exclusive']
 

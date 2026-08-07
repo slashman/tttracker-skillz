@@ -127,7 +127,7 @@ export function startEntry(cfg, opts) {
       end: null,
       weight: Number.isFinite(opts.weight) && opts.weight > 0 ? opts.weight : 1,
       tags: parseTags(opts.tags),
-      notes: opts.note ? [{ at: toLocalISO(nowDate, cfg.tz), text: String(opts.note) }] : [],
+      note: opts.note ? String(opts.note).trim() : null,
       links: parseLinks(opts.link),
     }
     day.entries.push(created)
@@ -195,7 +195,7 @@ export function logEntry(cfg, opts) {
       end: toLocalISO(new Date(endMs), cfg.tz),
       weight: Number.isFinite(opts.weight) && opts.weight > 0 ? opts.weight : 1,
       tags: parseTags(opts.tags),
-      notes: opts.note ? [{ at: toLocalISO(nowDate, cfg.tz), text: String(opts.note) }] : [],
+      note: opts.note ? String(opts.note).trim() : null,
       links: parseLinks(opts.link),
     }
     day.entries.push(created)
@@ -260,7 +260,7 @@ export function splitEntry(cfg, opts) {
       end: originalEnd,
       weight: first.weight,
       tags: [...first.tags],
-      notes: opts.note ? [{ at: toLocalISO(nowDate, cfg.tz), text: String(opts.note) }] : [],
+      note: opts.note ? String(opts.note).trim() : null,
       links: { ...first.links },
     }
     day.entries.push(created)
@@ -320,7 +320,7 @@ export function stopEntries(cfg, opts) {
     const updated = saveInto(cfg, dateKey, (day) => {
       const target = day.entries.find((e) => e.id === entry.id)
       target.end = toLocalISO(new Date(endMs), cfg.tz)
-      if (opts.note) target.notes.push({ at: toLocalISO(nowDate, cfg.tz), text: String(opts.note) })
+      if (opts.note) target.note = String(opts.note).trim()
       return target
     })
     stopped.push({ ...updated, dateKey, durationMinutes: round2(minutesBetween(entryStartMs(updated), endMs)) })
@@ -357,12 +357,8 @@ export function statusOf(cfg, { nowDate }) {
   }
 }
 
-export function addNote(cfg, opts) {
+function resolveNoteTarget(cfg, opts) {
   const { nowDate } = opts
-  const text = String(opts.text ?? '').trim()
-  if (!text) throw new TrackerError('no note text given')
-
-  let target
   if (opts.last) {
     const open = findOpenEntries(cfg, { nowDate })
     if (open.length === 0) throw new TrackerError('nothing is running to attach a note to')
@@ -371,24 +367,62 @@ export function addNote(cfg, opts) {
         hint: `Name one: ${open.map(({ entry }) => describe(entry)).join(' | ')}`,
       })
     }
-    target = open[0]
-  } else if (opts.query) {
+    return open[0]
+  }
+  if (opts.query) {
     const open = findOpenEntries(cfg, { nowDate })
     try {
-      target = matchOne(open, opts.query, { what: 'open entry' })
+      return matchOne(open, opts.query, { what: 'open entry' })
     } catch {
-      target = findById(cfg, opts.query)
+      return findById(cfg, opts.query)
     }
-  } else {
-    throw new TrackerError('no entry given', { hint: 'Pass a query or --last.' })
   }
+  throw new TrackerError('no entry given', { hint: 'Pass a query or --last.' })
+}
+
+/**
+ * `note` is one string on the entry, not a log. Writing a second one replaces the first, and
+ * the replaced text is echoed back so it can be retyped if that was not what was wanted - the
+ * same contract `rm` gives for a deleted entry.
+ */
+export function addNote(cfg, opts) {
+  const text = String(opts.text ?? '').trim()
+  if (!text) throw new TrackerError('no note text given')
+
+  const target = resolveNoteTarget(cfg, opts)
+  const replaced = target.entry.note ?? null
 
   const updated = saveInto(cfg, target.dateKey, (day) => {
     const e = day.entries.find((x) => x.id === target.entry.id)
-    e.notes.push({ at: toLocalISO(nowDate, cfg.tz), text })
+    e.note = text
     return e
   })
-  return { entry: updated, dateKey: target.dateKey, warnings: maybeAutoCommit(cfg, `note ${updated.id}`) }
+  return { entry: updated, dateKey: target.dateKey, replaced, warnings: maybeAutoCommit(cfg, `note ${updated.id}`) }
+}
+
+/**
+ * Clearing the note. Added 2026-08-06, when a note about *future* work was parked on an entry
+ * describing past work and there was no way to take it back off.
+ */
+export function removeNote(cfg, opts) {
+  const target = resolveNoteTarget(cfg, opts)
+  if (target.entry.note == null) {
+    throw new TrackerError(`${describe(target.entry)} has no note`, { hint: 'Nothing to remove.' })
+  }
+
+  const removed = target.entry.note
+  const updated = saveInto(cfg, target.dateKey, (day) => {
+    const e = day.entries.find((x) => x.id === target.entry.id)
+    e.note = null
+    return e
+  })
+  return {
+    entry: updated,
+    dateKey: target.dateKey,
+    // Echoed in full so a mistaken removal can be undone by retyping it.
+    removed,
+    warnings: maybeAutoCommit(cfg, `note --rm ${updated.id}`),
+  }
 }
 
 export function addLink(cfg, opts) {
