@@ -1,15 +1,14 @@
 # Tracker discovery session — observations
 
 Findings from **2026-08-06**, the seventh day of real use through the conversational skill.
-Continues the letter scheme from [`discovery-2026-08-04.md`](discovery-2026-08-04.md); two new
-findings, `AJ`–`AK`. Item **E**, open since day one, was fixed and committed in this session
-(`dbe8794`).
+Continues the letter scheme from [`discovery-2026-08-04.md`](discovery-2026-08-04.md); three new
+findings, `AJ`–`AL`, two of them fixed in the session that produced them. Item **E**, open since
+day one, was fixed and committed in this session (`dbe8794`).
 
-The day so far: 7 entries, 1 project, raw **3h01m** over **2h23m** of union wall clock — overlap
-factor **1.262**, peak concurrency **2**, 38m of overlap, 8 context switches. Data in
-`~/.tracker/data/days/2026/08/2026-08-06.json`. The day is still in progress; these numbers are a
-snapshot taken mid-afternoon, not a close-out. Two more entries followed (a 30m tracker-work block
-and a resumed ACME-162 clock), so the day stands at 9 entries and 2 projects as **AK′** is written.
+The day closed at **11 entries, 3 projects, 6h08m raw over 4h43m** of union wall clock — overlap
+factor **1.299**, peak concurrency **2**, 1h25m of overlap, 13 context switches. Data in
+`~/.tracker/data/days/2026/08/2026-08-06.json`. **AJ** and **AK** were written against a
+mid-afternoon snapshot of 7 entries in 1 project, which is why they count the day smaller than this.
 
 **2026-08-05 has 8 entries (3h48m) and no discovery doc.** The tracking record is now ahead of the
 observation record — worth knowing when reading this series as a history.
@@ -133,6 +132,49 @@ Consequence for **AJ**: an editable timeline would have made the bad `resume` a 
 fix rather than an hour of it being wrong. It would not have *prevented* it — the tool still has to
 pick the right entry when the user speaks, which is why the fix in `dbe8794` matters either way.
 
+## AL. Notes were an append-only log of the wrong thing
+**Severity: medium — silent, and it took a schema change to fix properly.**
+
+Asked at the close of the day what was overflowing to tomorrow, the assistant wrote the answers onto
+the nearest entries as notes. One of them — *"editable day UI (AK') recorded as direction, deferred
+— no date"* — went onto `rivl9s`, the 30-minute block of tracker work. Nothing about the UI happened
+in those 30 minutes. It was **future work parked on an entry describing past work**, and read back
+in a week it would look like half an hour spent on a UI that does not exist.
+
+Two separate faults, and the first one hid the second.
+
+**No way to take it off.** `note` only ever appended (`e.notes.push(...)`), and `edit` had no
+`--note` flag. The only routes were hand-editing a day file — which the skill forbids, correctly,
+because the CLI owns the arithmetic — or deleting the entry and re-logging it. A tool that can
+record something it cannot un-record will accumulate wrong data forever, one small mistake at a
+time. `note <query> --rm` was written to close that.
+
+**The shape was wrong underneath.** Building removal exposed it: removal-by-position (`--rm 2`,
+`--rm last`) needs positions, positions need a list, and a list needs the user to remember what is
+in it. The user's call — *"notes should be just an attribute of the entry, not a structured list"* —
+made removal trivial (clear the field) and made the timestamps go away, which were never used by
+anything. `schemaVersion` went to **2**: `notes: [{at, text}]` → `note: string | null`. Version 1
+files fold forward on read, texts joined with `"; "`, and are only rewritten when next written for
+their own reasons; all 19 noted entries across seven days survived, verified by export.
+
+Deliberate consequence: a second `note` **replaces** the first. Three entries on 08-04 had used
+notes as progress logs (*"verify no regressions on mobile"* → *"smoke tests on mobile successful"*), so
+that habit now overwrites rather than accumulates. The replaced text is echoed in the response
+specifically so it never vanishes silently, and the skill is told to relay it.
+
+**The finding under the finding, and the one worth the blog post.** The note was *parked* on an
+entry because the tool had nowhere else to put it. Deferred work, a decision recorded, a thing to
+pick up tomorrow — none of that is tracked time, but the entry was the only writable surface in
+reach. Notes then quietly became a to-do list attached to durations. Same pressure as **AK′**, from
+the other side: **AK′** is state that wants a *view*, this is state that wants a *home*. A time
+tracker that only stores intervals will keep having non-interval state pushed into whatever field
+is nearest.
+
+**STATUS: FIXED 2026-08-06**, commit `0271fde`, on top of the `--rm` work in the same session. 172
+tests pass, three of them covering the version-1 fold specifically. `docs/SCHEMA.md` documents
+version 2; the skill gained a rule that a note is an attribute and that deferred work does not
+belong on a past entry.
+
 ---
 
 ## Carried forward
@@ -142,7 +184,9 @@ pick the right entry when the user speaks, which is why the fix in `dbe8794` mat
 3. **`exclusive` attribution** — never used, on any day.
 4. **Trigger from an utterance that does not name tracking** — this session opened with an explicit
    `/time-tracking` invocation again, so still untested.
-5. **`log` and `split`** — `log` had its first live use today (`qht4e4`, reconstructing the project
+5. **A home for non-interval state** (**AL**, **AK′**) — deferred work, decisions and
+   pick-up-tomorrow items still have nowhere to live but an entry's note or a doc. Not designed.
+6. **`log` and `split`** — `log` had its first live use today (`qht4e4`, reconstructing the project
    sync from *"stopped at 2:00PM … which just finished"*), reached for without prompting. `split`
    remains unused in real work.
 
