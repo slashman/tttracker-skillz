@@ -56,7 +56,7 @@ report          [--from D --to D | --week | --month] [--project P] [--attribute]
                 [--no-balance] [--format md|json|csv]
 analyze         [--from D --to D | --week | --month]
 export          [--from D --to D | --week | --month] [--attribute] [--format json|csv]
-note <query|--last> <text…> | <query|--last> --rm [N|last]
+note <query|--last> <text…> | <query|--last> --rm
 link <query> <key=value…>
 edit <id> [--task|--project|--start|--end|--tags|--weight|--link]
 rm <id>         resume [query]
